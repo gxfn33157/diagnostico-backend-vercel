@@ -1,9 +1,8 @@
 {
   "name": "diagnostico-backend-vercel",
   "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "start": "node api/detector.ts"
-  },
-  "dependencies": {}
+  "private": true,
+  "devDependencies": {
+    "@vercel/node": "^3.0.0"
+  }
 }
