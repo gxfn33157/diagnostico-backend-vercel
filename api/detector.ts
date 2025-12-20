@@ -1,5 +1,41 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import dns from "dns/promises";
+import net from "net";
+
+function tcpTest(host: string, port = 443, timeout = 3000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const socket = new net.Socket();
+
+    socket.setTimeout(timeout);
+
+    socket.connect(port, host, () => {
+      const latency = Date.now() - start;
+      socket.destroy();
+      resolve({
+        status: "online",
+        port,
+        latency_ms: latency
+      });
+    });
+
+    socket.on("error", () => {
+      socket.destroy();
+      resolve({
+        status: "offline",
+        port
+      });
+    });
+
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve({
+        status: "timeout",
+        port
+      });
+    });
+  });
+}
 
 export default async function handler(
   req: VercelRequest,
@@ -10,45 +46,42 @@ export default async function handler(
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Preflight
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
   try {
-    // Método
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Método não permitido" });
     }
 
-    // Body
     const { dominio } = req.body || {};
 
     if (!dominio || typeof dominio !== "string") {
       return res.status(400).json({ error: "Domínio inválido" });
     }
 
-    // 🌐 DNS Lookup
-    let dnsResult: any;
+    // 🌐 DNS
+    let dnsResult;
     try {
       dnsResult = await dns.resolveAny(dominio);
-    } catch (err: any) {
-      dnsResult = {
-        error: "Falha ao resolver DNS",
-        detalhe: err?.message || "erro desconhecido"
-      };
+    } catch {
+      dnsResult = { error: "Falha ao resolver DNS" };
     }
 
-    // ✅ Resposta final
+    // 📡 TCP (latência real)
+    const tcpResult = await tcpTest(dominio);
+
     return res.status(200).json({
       dominio,
       status: "ok",
       origem: "vercel-serverless",
       dns: dnsResult,
+      tcp: tcpResult,
       timestamp: new Date().toISOString()
     });
 
-  } catch (err) {
+  } catch {
     return res.status(500).json({
       error: "Erro interno no diagnóstico"
     });
