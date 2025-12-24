@@ -1,20 +1,16 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+import type { VercelRequest, VercelResponse } from "vercel";
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // ===============================
-  // CORS (obrigatório para navegador)
-  // ===============================
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
+  // CORS – permite teste direto do navegador
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Preflight
   if (req.method === "OPTIONS") {
-    return res.status(204).end();
-  }
-
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(200).end();
   }
 
   const { id } = req.query;
@@ -29,32 +25,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     if (!response.ok) {
-      return res.status(response.status).json({
-        error: "Erro ao consultar Globalping",
-      });
+      throw new Error("Globalping ainda processando ou ID inválido");
     }
 
     const data = await response.json();
 
-    const probes =
-      data.results?.map((r: any) => ({
-        continente: r.probe?.continent,
-        pais: r.probe?.country,
-        cidade: r.probe?.city,
-        rtt_ms: r.result?.rtt,
-        status: r.result?.status,
-      })) || [];
+    const probes = data.results?.map((r: any) => ({
+      continente: r.probe?.continent || null,
+      pais: r.probe?.country || null,
+      cidade: r.probe?.city || null,
+      isp: r.probe?.asn?.name || null,
+      status: r.result?.status || "unknown",
+      rtt_ms: r.result?.rtt || null,
+    })) || [];
 
     return res.status(200).json({
       measurement_id: id,
-      status: data.status,
       probes,
+      total: probes.length,
       timestamp: new Date().toISOString(),
     });
-  } catch (err: any) {
+
+  } catch (error: any) {
     return res.status(500).json({
-      error: "Erro interno",
-      details: err.message,
+      error: "Erro ao consultar Globalping",
+      detalhe: error.message,
     });
   }
 }
