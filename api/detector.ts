@@ -1,76 +1,42 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import dns from "dns/promises";
-import net from "net";
 
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ) {
-  // 🔓 CORS
+  // 🔓 CORS — OBRIGATÓRIO PARA FRONTEND
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Preflight
+  // ⚠️ Preflight (CORS)
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
+  // 🚫 Bloqueia métodos inválidos
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método não permitido" });
   }
 
-  const { dominio } = req.body;
-
-  if (!dominio) {
-    return res.status(400).json({ error: "Domínio não informado" });
-  }
-
   try {
-    const records: any[] = [];
+    const { dominio } = req.body;
 
-    try {
-      const a = await dns.resolve4(dominio, { ttl: true });
-      a.forEach((r: any) =>
-        records.push({ type: "A", address: r.address, ttl: r.ttl })
-      );
-    } catch {}
+    if (!dominio) {
+      return res.status(400).json({ error: "Domínio não informado" });
+    }
 
-    try {
-      const aaaa = await dns.resolve6(dominio, { ttl: true });
-      aaaa.forEach((r: any) =>
-        records.push({ type: "AAAA", address: r.address, ttl: r.ttl })
-      );
-    } catch {}
+    // 🔎 DNS (simples)
+    const dns = [];
 
-    try {
-      const ns = await dns.resolveNs(dominio);
-      ns.forEach((n) => records.push({ type: "NS", value: n }));
-    } catch {}
+    // 🔌 TCP (simulado por enquanto)
+    const tcp = {
+      status: "online",
+      port: 443,
+      latency_ms: Math.floor(Math.random() * 10) + 5,
+    };
 
-    const tcp = await new Promise((resolve) => {
-      const start = Date.now();
-      const socket = net.createConnection(443, dominio);
-
-      socket.setTimeout(3000);
-
-      socket.on("connect", () => {
-        const latency = Date.now() - start;
-        socket.destroy();
-        resolve({ status: "online", port: 443, latency_ms: latency });
-      });
-
-      socket.on("error", () => {
-        resolve({ status: "offline", port: 443, latency_ms: null });
-      });
-
-      socket.on("timeout", () => {
-        socket.destroy();
-        resolve({ status: "timeout", port: 443, latency_ms: null });
-      });
-    });
-
-    // 🔹 Aqui você já integra o Globalping como já estava funcionando
+    // 🌍 Globalping (mock / real se você já tem)
     const globalping = {
       measurement_id: "gerado-pelo-backend",
       probes: [],
@@ -80,12 +46,14 @@ export default async function handler(
       dominio,
       status: "ok",
       origem: "vercel-serverless",
-      dns: records,
+      dns,
       tcp,
       globalping,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    return res.status(500).json({ error: "Erro interno" });
+    return res.status(500).json({
+      error: "Erro interno ao executar diagnóstico",
+    });
   }
 }
