@@ -4,41 +4,55 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ) {
-  const { id } = req.query;
+  // =========================
+  // 🔓 CORS (OBRIGATÓRIO)
+  // =========================
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (!id || typeof id !== "string") {
-    return res.status(400).json({ error: "measurement_id inválido" });
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
   }
 
   try {
-    // chama o endpoint atual (que já funciona)
-    const response = await fetch(
-      `https://diagnostico-backend-vercel.vercel.app/api/globalping/${id}`
-    );
+    const { id } = req.query;
 
-    if (!response.ok) {
-      return res.status(502).json({ error: "Erro ao consultar Globalping" });
+    if (!id || typeof id !== "string") {
+      return res.status(400).json({ error: "ID inválido" });
     }
 
-    const data = await response.json();
-    const results = data?.results?.results || [];
+    const response = await fetch(
+      `https://api.globalping.io/v1/measurements/${id}`
+    );
 
-    const summary = results.map((item: any) => ({
-      continent: item.probe?.continent,
-      country: item.probe?.country,
-      city: item.probe?.city,
-      network: item.probe?.network,
-      avg_rtt: item.result?.stats?.avg ?? null,
-      loss: item.result?.stats?.loss ?? null
+    const data = await response.json();
+
+    if (!data || !data.results) {
+      return res.status(200).json({
+        status: data?.status ?? "unknown",
+        target: data?.target ?? null,
+        summary: [],
+      });
+    }
+
+    const summary = data.results.map((r: any) => ({
+      continente: r.probe?.continent ?? "N/A",
+      pais: r.probe?.country ?? "N/A",
+      cidade: r.probe?.city ?? "N/A",
+      isp: r.probe?.asn_name ?? "N/A",
+      status: r.result?.status ?? "unknown",
+      rtt_ms: r.result?.rtt ?? null,
     }));
 
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.status(200).json({
-      target: data.results?.target,
-      status: data.results?.status,
-      summary
+    return res.status(200).json({
+      target: data.target,
+      status: data.status,
+      summary,
     });
   } catch (error) {
-    res.status(500).json({ error: "Erro interno" });
+    return res.status(500).json({
+      error: "Erro ao consultar GlobalPing",
+    });
   }
 }
