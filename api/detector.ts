@@ -1,3 +1,7 @@
+export const config = {
+  runtime: "nodejs"
+};
+
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import dns from "dns/promises";
 import net from "net";
@@ -119,3 +123,4 @@ export default async function handler(
     timestamp: new Date().toISOString()
   });
 }
+
