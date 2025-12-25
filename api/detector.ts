@@ -1,71 +1,65 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
+const GLOBALPING_TOKEN = process.env.GLOBALPING_TOKEN!;
 const GLOBALPING_API = "https://api.globalping.io/v1";
 
 function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // 🔓 CORS (resolve erro do frontend)
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ erro: "Método não permitido" });
-  }
-
   try {
-    const { dominio } = req.body;
+    if (req.method !== "POST") {
+      return res.status(405).json({ erro: "Método não permitido" });
+    }
 
+    const { dominio } = req.body;
     if (!dominio) {
       return res.status(400).json({ erro: "Domínio não informado" });
     }
 
-    // 1️⃣ Dispara medição Globalping
-    const startResp = await fetch(`${GLOBALPING_API}/measurements`, {
+    /* 1️⃣ CRIA MEDIÇÃO GLOBALPING */
+    const createResp = await fetch(`${GLOBALPING_API}/measurements`, {
       method: "POST",
       headers: {
+        Authorization: `Bearer ${GLOBALPING_TOKEN}`,
         "Content-Type": "application/json",
-        "User-Agent": "diagnostico-vercel"
       },
       body: JSON.stringify({
         type: "ping",
         target: dominio,
-        limit: 50
-      })
+        locations: [{ magic: "world" }],
+        limit: 1,
+      }),
     });
 
-    const startData = await startResp.json();
-    const measurementId = startData.id;
+    const createData = await createResp.json();
+    const measurementId = createData.id;
 
-    // 2️⃣ Aguarda até 30s a medição finalizar
-    let summaryData: any = null;
-    let finished = false;
+    /* 2️⃣ AGUARDA CONCLUSÃO (até 30s) */
+    let summary: any = null;
+    let status = "in-progress";
 
-    for (let i = 0; i < 10; i++) {
-      await sleep(3000); // 3s x 10 = 30s
+    for (let i = 0; i < 15; i++) {
+      await sleep(2000);
 
-      const summaryResp = await fetch(
-        `${GLOBALPING_API}/measurements/${measurementId}/summary`
+      const checkResp = await fetch(
+        `${GLOBALPING_API}/measurements/${measurementId}`,
+        {
+          headers: { Authorization: `Bearer ${GLOBALPING_TOKEN}` },
+        }
       );
 
-      const data = await summaryResp.json();
+      const checkData = await checkResp.json();
+      status = checkData.status;
 
-      if (data.status === "finished") {
-        summaryData = data;
-        finished = true;
+      if (status === "finished") {
+        summary = checkData.results;
         break;
       }
     }
 
-    // 3️⃣ Se não finalizou → retorna Instável
-    if (!finished || !summaryData?.summary) {
+    if (!summary) {
       return res.json({
         dominio,
         status_geral: "Instável",
@@ -73,56 +67,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continentes: {},
         texto_noc: "Medição Globalping ainda em processamento. Reexecute o teste.",
         globalping: { measurement_id: measurementId },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
 
-    // 4️⃣ Processa por continente
-    const continentes: Record<string, { ok: number; falha: number }> = {};
+    /* 3️⃣ AGRUPA POR CONTINENTE */
+    const continentes: Record<string, any> = {};
 
-    for (const item of summaryData.summary) {
-      const continente = item.continent || "Desconhecido";
-      if (!continentes[continente]) {
-        continentes[continente] = { ok: 0, falha: 0 };
+    for (const r of summary) {
+      const cont = r.location?.continent || "Desconhecido";
+
+      if (!continentes[cont]) {
+        continentes[cont] = {
+          total: 0,
+          ok: 0,
+          falha: 0,
+        };
       }
 
-      if (item.success) {
-        continentes[continente].ok++;
+      continentes[cont].total++;
+
+      if (r.result?.status === "finished") {
+        continentes[cont].ok++;
       } else {
-        continentes[continente].falha++;
+        continentes[cont].falha++;
       }
     }
 
-    // 5️⃣ Define status geral
-    let status_geral = "Disponível";
-    let problema_rota_internacional = false;
+    /* 4️⃣ CALCULA STATUS GERAL */
+    let status_geral: "OK" | "Instável" | "Indisponível" = "OK";
+    let continentes_com_falha = 0;
 
     for (const c of Object.values(continentes)) {
-      if (c.falha > c.ok) {
-        status_geral = "Indisponível";
-        problema_rota_internacional = true;
-        break;
-      }
-      if (c.falha > 0) {
-        status_geral = "Instável";
-      }
+      if (c.falha > 0) continentes_com_falha++;
     }
 
-    // 6️⃣ Texto para NOC
+    if (continentes_com_falha === 1) status_geral = "Instável";
+    if (continentes_com_falha > 1) status_geral = "Indisponível";
+
+    /* 5️⃣ DETECTA PROBLEMA DE ROTA INTERNACIONAL */
+    const problema_rota_internacional =
+      continentes["SA"] &&
+      continentes["SA"].falha === 0 &&
+      continentes_com_falha > 0;
+
+    /* 6️⃣ TEXTO AUTOMÁTICO NOC */
     let texto_noc = `Diagnóstico de conectividade para ${dominio}\n\n`;
     texto_noc += `Status geral: ${status_geral}\n\nResumo por continente:\n`;
 
-    for (const [cont, dados] of Object.entries(continentes)) {
-      texto_noc += `- ${cont}: ${dados.ok} OK / ${dados.falha} Falhas\n`;
+    for (const [c, v] of Object.entries(continentes)) {
+      texto_noc += `- ${c}: ${v.ok}/${v.total} OK\n`;
     }
 
     if (problema_rota_internacional) {
-      texto_noc += `\n⚠️ Indícios de problema de rota internacional.`;
-    } else {
-      texto_noc += `\nNenhum problema crítico de rota internacional detectado.`;
+      texto_noc +=
+        "\nPossível problema de rota internacional detectado. Acesso local normal.";
     }
 
-    // 7️⃣ Resposta final
+    /* 7️⃣ RESPOSTA FINAL */
     return res.json({
       dominio,
       status_geral,
@@ -130,15 +132,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       continentes,
       texto_noc,
       globalping: {
-        measurement_id: measurementId
+        target: dominio,
+        status: "finished",
+        summary,
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-
-  } catch (err) {
-    console.error("Erro detector:", err);
-    return res.status(500).json({
-      erro: "Erro interno ao executar diagnóstico"
-    });
+  } catch (e) {
+    console.error(e);
+    return res
+      .status(500)
+      .json({ erro: "Erro interno ao executar diagnóstico" });
   }
 }
